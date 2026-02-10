@@ -154,7 +154,7 @@ class AdaptiveCalibrationDataReader(CalibrationDataReader):
 # Adaptive quantization: FP32 → int8 or int16 (from QUANT_BITS), QDQ format.
 # Calibration: MinMax (built-in) or MSE (custom MSE minimization of quantization error).
 # Use fewer samples if you hit OOM (e.g. 50–100); 500 can need 10+ GB RAM with MSE.
-num_calib_samples = 100
+num_calib_samples = 50
 calib_reader = AdaptiveCalibrationDataReader(
     model_fp32,
     num_samples=num_calib_samples,
