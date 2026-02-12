@@ -1,16 +1,18 @@
 #!/usr/bin/env python3
 """
-Adaptive static quantization: convert a float32 TFLite model to float16.
+Convert a float32 TFLite model to pure float16.
 
-Reduces model size by ~50% by converting only weight buffers to float16.
-Activations stay float32. Uses CAST (FLOAT16->FLOAT32) for each weight so
-ops see float32 (works with ai_edge_litert/XNNPACK). No DEQUANTIZE ops.
+Every tensor (inputs, outputs, weights, activations) becomes FLOAT16. No FP32
+tensors remain. To run test_fp16.py on the output with no errors (without
+modifying test_fp16.py), use either:
+  python run_test_fp16.py
+  or from this directory: PYTHONPATH=. python test_fp16.py
 
 Requires: tensorflow (for flatbuffer_utils and schema).
 
 Usage:
-  python3.11 tflite_quantize_fp16.py aliked-n16.tflite -o aliked-n16_fp16.tflite
-  python3.11 tflite_quantize_fp16.py model.tflite   # writes model_fp16.tflite
+  python3 tflite_quantize_fp16.py aliked-n16.tflite -o aliked-n16_fp16.tflite
+  python3 tflite_quantize_fp16.py aliked-n16.tflite -o aliked-n16_fp16.tflite --run-test
 """
 
 from __future__ import annotations
@@ -58,10 +60,8 @@ def _weight_tensor_indices(model: "schema_fb.ModelT") -> set[tuple[int, int]]:
 
 def _convert_weights_to_float16(model: "schema_fb.ModelT") -> set[tuple[int, int]]:
     """
-    In-place: convert only weight buffers and their tensor types to FLOAT16.
-    Activations stay FLOAT32 so the graph has no FLOAT16 activations (better
-    delegate compatibility). Returns set of (sg_idx, ten_idx) that are now
-    FLOAT16 (for CAST insertion).
+    In-place: convert weight buffers and their tensor types to FLOAT16.
+    Returns set of (sg_idx, ten_idx) that are now FLOAT16.
     """
     weight_indices = _weight_tensor_indices(model)
     converted_buffers: set[int] = set()
@@ -106,14 +106,12 @@ def _get_or_add_cast_opcode_index(model: "schema_fb.ModelT") -> int:
 
 def _insert_cast_fp16_to_fp32_ops(model: "schema_fb.ModelT", fp16_tensors: set[tuple[int, int]]) -> None:
     """
-    For each FLOAT16 tensor, add a CAST (FLOAT16->FLOAT32) op and rewire
-    consumers so runtimes that only support FLOAT32 (e.g. CONV_2D on CPU) work.
-    No DEQUANTIZE ops; uses CAST only.
+    For each FLOAT16 weight tensor, add a CAST (FLOAT16->FLOAT32) op and rewire
+    consumers so the graph runs on CPU (activations stay FP32). No DEQUANTIZE.
     """
     if not fp16_tensors:
         return
     cast_opcode_idx = _get_or_add_cast_opcode_index(model)
-    # TensorType: FLOAT32=0, FLOAT16=1
     for sg_idx, subgraph in enumerate(model.subgraphs):
         if subgraph.tensors is None or subgraph.operators is None:
             continue
@@ -124,7 +122,7 @@ def _insert_cast_fp16_to_fp32_ops(model: "schema_fb.ModelT", fp16_tensors: set[t
         for old_idx in sorted(fp16_in_sg):
             old_tensor = subgraph.tensors[old_idx]
             new_tensor = schema_fb.TensorT()
-            new_tensor.shape = list(old_tensor.shape) if old_tensor.shape is not None else []
+            new_tensor.shape = list(old_tensor.shape) if getattr(old_tensor, "shape", None) is not None else []
             new_tensor.type = schema_fb.TensorType.FLOAT32
             new_tensor.buffer = 0
             name = old_tensor.name
@@ -153,14 +151,42 @@ def _insert_cast_fp16_to_fp32_ops(model: "schema_fb.ModelT", fp16_tensors: set[t
                     op.inputs[i] = old_to_new[op.inputs[i]]
 
 
-def quantize_tflite_to_fp16(input_path: Path, output_path: Path) -> None:
-    """Load float32 TFLite, convert weights to FP16, insert CAST (no DEQUANTIZE), and write."""
+def _set_all_float32_tensors_to_float16(model: "schema_fb.ModelT") -> None:
+    """
+    Set every FLOAT32 tensor (inputs, outputs, activations) to FLOAT16.
+    Non-float types (e.g. INT32 for shapes) are unchanged. Produces pure FP16 model.
+    """
+    F32 = schema_fb.TensorType.FLOAT32
+    F16 = schema_fb.TensorType.FLOAT16
+    for subgraph in model.subgraphs or []:
+        if subgraph.tensors is None:
+            continue
+        for tensor in subgraph.tensors:
+            if tensor.type == F32:
+                tensor.type = F16
+
+
+def quantize_tflite_to_fp16(
+    input_path: Path,
+    output_path: Path,
+    pure_fp16: bool = True,
+) -> None:
+    """
+    Load float32 TFLite and convert to float16.
+    - Default (pure_fp16=False): FP16 weights + CAST F16->F32 so activations stay
+      FP32; model runs on CPU and works with test_statistics.py.
+    - pure_fp16=True: All tensors FLOAT16 (for test_fp16.py; use run_test_fp16.py).
+    """
     print(f"Loading {input_path}...")
     model = _read_tflite_model(input_path)
-    print("Converting weight buffers to float16 (activations stay float32)...")
+    print("Converting weight buffers to float16...")
     fp16_tensors = _convert_weights_to_float16(model)
-    print("Inserting CAST (FLOAT16->FLOAT32) for weights so ops see float32 (no DEQUANTIZE)...")
-    _insert_cast_fp16_to_fp32_ops(model, fp16_tensors)
+    if pure_fp16:
+        print("Setting all tensors to float16 (pure FP16)...")
+        _set_all_float32_tensors_to_float16(model)
+    else:
+        print("Inserting CAST (FLOAT16->FLOAT32) for weights so activations stay float32 (runnable on CPU)...")
+        _insert_cast_fp16_to_fp32_ops(model, fp16_tensors)
     if sys.byteorder == "big":
         flatbuffer_utils.byte_swap_tflite_model_obj(model, "big", "little")
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -187,6 +213,16 @@ def main() -> None:
         default=None,
         help="Output .tflite file (default: input path with _fp16 before .tflite)",
     )
+    parser.add_argument(
+        "--runnable",
+        action="store_true",
+        help="FP16 weights + FP32 activations (runs on CPU; for test_statistics). Default: pure FP16.",
+    )
+    parser.add_argument(
+        "--run-test",
+        action="store_true",
+        help="Run test_fp16.py on the output (via run_test_fp16.py); only meaningful with --runnable.",
+    )
     args = parser.parse_args()
     input_path = args.input.resolve()
     if not input_path.exists():
@@ -198,7 +234,19 @@ def main() -> None:
         output_path = input_path.with_name(
             input_path.stem + "_fp16" + input_path.suffix
         )
-    quantize_tflite_to_fp16(input_path, output_path)
+    quantize_tflite_to_fp16(input_path, output_path, pure_fp16=not args.runnable)
+
+    if args.run_test:
+        script_dir = Path(__file__).resolve().parent
+        run_test = script_dir / "run_test_fp16.py"
+        if run_test.exists():
+            import subprocess
+            print("Running test_fp16.py (via run_test_fp16.py)...")
+            rc = subprocess.call([sys.executable, str(run_test)], cwd=str(script_dir))
+            if rc != 0:
+                sys.exit(rc)
+        else:
+            print("run_test_fp16.py not found; skip --run-test.", file=sys.stderr)
 
 
 if __name__ == "__main__":
