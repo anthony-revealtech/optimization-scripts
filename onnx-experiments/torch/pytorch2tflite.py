@@ -19,6 +19,11 @@ Usage:
   python3.11 pytorch2tflite.py                    # try direct, then ONNX fallback
   python3.11 pytorch2tflite.py --use-onnx         # skip direct, use ONNX only
   python3.11 pytorch2tflite.py --onnx model.onnx  # existing ONNX -> TFLite
+
+
+
+  python3.11 tflite_quantize_fp16.py aliked-n16.tflite -o aliked-n16_fp16.tflite
+  python3.11 tflite_quantize_fp16.py model.tflite   # writes model_fp16.tflite
 """
 
 from __future__ import annotations
