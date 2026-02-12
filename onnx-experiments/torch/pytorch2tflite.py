@@ -32,6 +32,8 @@ import argparse
 import shutil
 import sys
 from pathlib import Path
+import torch
+import litert_torch
 
 # Default paths relative to this script
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -121,12 +123,6 @@ def convert_pytorch_to_tflite_direct(pth_path: Path, tflite_path: Path) -> bool:
     Convert PyTorch model directly to TFLite using litert_torch (no ONNX).
     Returns True on success, False if litert_torch is missing or conversion fails.
     """
-    try:
-        import litert_torch
-    except ImportError:
-        return False
-
-    import torch
 
     # Use regular conv2d instead of deform_conv2d so litert_torch can lower the graph.
     _patch_deform_conv2d_for_litert()
