@@ -1,0 +1,15 @@
+# Requirements for PyTorch -> ONNX -> TFLite (pytorch2tflite.py --use-onnx).
+# Use a dedicated virtualenv; do not install litert-torch in this env.
+# onnx2tf pins protobuf==4.25.5 and ai-edge-litert==2.1.0, which conflict with
+# litert-torch, ai-edge-quantizer, and packages that need protobuf>=6.
+#
+#   python3.11 -m venv .venv-p2t-onnx
+#   source .venv-p2t-onnx/bin/activate
+#   pip3 install -r requirements-pytorch2tflite-onnx.txt
+#   export PYTHONPATH=/home/anthony/Documents/Programming/reveal/ALIKED:$PYTHONPATH
+#   python3.11 pytorch2tflite.py --use-onnx
+
+torch
+onnx
+onnx2tf
+tensorflow

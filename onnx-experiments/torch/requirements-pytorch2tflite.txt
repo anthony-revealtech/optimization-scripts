@@ -1,0 +1,15 @@
+# Requirements for direct PyTorch -> TFLite conversion (pytorch2tflite.py).
+# Use a dedicated virtualenv to avoid conflicts with torchvision/torchaudio/onnx2tf/tensorflow:
+#
+#   python3.11 -m venv .venv-p2t
+#   source .venv-p2t/bin/activate   # or .venv-p2t\Scripts\activate on Windows
+#   pip3 install -r requirements-pytorch2tflite.txt
+#   export PYTHONPATH=/home/anthony/Documents/Programming/reveal/ALIKED:$PYTHONPATH
+#   python3.11 pytorch2tflite.py
+#
+# litert-torch pins specific torch/protobuf/ai-edge-* versions that can conflict
+# with torchvision, torchaudio, onnx2tf, and tensorflow in the same environment.
+# torchvision is required by ALIKED (nets.aliked imports torchvision.models.resnet).
+
+litert-torch
+torchvision
